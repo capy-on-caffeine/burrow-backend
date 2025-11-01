@@ -14,7 +14,7 @@ if (!uri || !user || !password) {
   process.exit(1);
 }
 
-const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
+export const driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
 
 export const session = () => driver.session();
 

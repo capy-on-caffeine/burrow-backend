@@ -12,6 +12,7 @@ import { ensureCollections } from './config/qdrant.js';
 import { syncDataToQdrant } from './services/loader.js';
 import { searchBurrow } from './services/search.js';
 import { addPost } from './services/post.js';
+import driver from './config/neo4j.js';
 
 const app = express();
 const port = 5000;
