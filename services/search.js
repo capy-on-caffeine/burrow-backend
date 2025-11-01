@@ -1,6 +1,7 @@
 import { embed } from "../controllers/search.controller.js";
 import { searchVector } from "../config/qdrant.js";
 import { session } from "../config/neo4j.js";
+import { fetchPostsByTitles } from "../controllers/post.controller.js";
 
 export async function searchBurrow(query) {
   const qVec = await embed(query);
@@ -12,13 +13,24 @@ export async function searchBurrow(query) {
   const res = await s.run(
     `
     MATCH (n)
-    WHERE n.id IN $ids
+    WHERE id(n) IN $ids
     RETURN n
     `,
     { ids }
   );
   await s.close();
-
+  
   const nodes = res.records.map(r => r.get("n").properties);
-  return { results, nodes };
+  console.log(nodes);
+  console.log(results);
+  
+  let titleList = [];
+
+  for (const r of results) {
+    titleList.push(r.payload.name);
+  }
+
+  const postsByTitles = await fetchPostsByTitles(titleList);
+  
+  return postsByTitles
 }

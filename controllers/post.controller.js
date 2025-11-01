@@ -57,6 +57,42 @@ const getPostsByTitle = async (req, res) => {
   }
 };
 
+// Service function to fetch posts by titles (can be used internally)
+const fetchPostsByTitles = async (titles) => {
+  if (!Array.isArray(titles) || titles.length === 0) {
+    throw new Error('titles must be a non-empty array');
+  }
+
+  console.log(`Fetching posts for ${titles.length} titles`);
+
+  const posts = await Post.find({ title: { $in: titles } })
+    .populate('author', 'username')
+    .sort({ createdAt: -1 });
+
+  console.log(`Found ${posts.length} posts matching the provided titles`);
+
+  return posts;
+};
+
+// Controller function for HTTP route
+const getPostsByTitles = async (req, res) => {
+  try {
+    const { titles } = req.body;
+
+    const posts = await fetchPostsByTitles(titles);
+
+    if (!posts || posts.length === 0) {
+      return res.status(404).json({ message: 'No posts found for the provided titles' });
+    }
+
+    res.status(200).json(posts);
+  } catch (error) {
+    console.log(error);
+    
+    res.status(500).json({ message: 'Error fetching posts by titles', error: error.message });
+  }
+};
+
 const createPost = async (req, res) => {
   try {
     const { title, body, author, subreddit } = req.body;
@@ -118,4 +154,4 @@ const updatePostVotes = async (req, res) => {
   }
 };
 
-export { getAllPosts, createPost, getPostById, updatePostVotes, getPostsBySubreddit, getPostsByTitle };
+export { getAllPosts, createPost, getPostById, updatePostVotes, getPostsBySubreddit, getPostsByTitle, getPostsByTitles, fetchPostsByTitles };
