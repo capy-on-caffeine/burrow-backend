@@ -9,6 +9,54 @@ const getAllPosts = async (req, res) => {
   }
 };
 
+const getPostsBySubreddit = async (req, res) => {
+  try {
+    const { subreddit } = req.params;
+    // Decode the subreddit name from the URL parameter
+    const decodedSubreddit = decodeURIComponent(subreddit);
+    console.log(`Fetching posts for subreddit: ${decodedSubreddit}`);
+
+    // Query using the decoded subreddit
+    const posts = await Post.find({ subreddit: decodedSubreddit })
+      .populate('author', 'username')
+      .sort({ createdAt: -1 });
+
+    console.log(`Found ${posts.length} posts for subreddit ${decodedSubreddit}`);
+
+    if (!posts || posts.length === 0) {
+      return res.status(404).json({ message: 'No posts found for this subreddit' });
+    }
+
+    res.status(200).json(posts);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching posts by subreddit', error: error.message });
+  }
+};
+
+const getPostsByTitle = async (req, res) => {
+  try {
+    const { title } = req.params;
+    // Decode the subreddit name from the URL parameter
+    const decodedSubreddit = decodeURIComponent(title);
+    console.log(`Fetching posts for title: ${decodedSubreddit}`);
+
+    // Query using the decoded subreddit
+    const posts = await Post.find({ title: decodedSubreddit })
+      .populate('author', 'username')
+      .sort({ createdAt: -1 });
+
+    console.log(`Found ${posts.length} posts for title ${decodedSubreddit}`);
+
+    if (!posts || posts.length === 0) {
+      return res.status(404).json({ message: 'No posts found for this subreddit' });
+    }
+
+    res.status(200).json(posts);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching posts by subreddit', error: error.message });
+  }
+};
+
 const createPost = async (req, res) => {
   try {
     const { title, body, author, subreddit } = req.body;
@@ -70,4 +118,4 @@ const updatePostVotes = async (req, res) => {
   }
 };
 
-export { getAllPosts, createPost, getPostById, updatePostVotes };
+export { getAllPosts, createPost, getPostById, updatePostVotes, getPostsBySubreddit, getPostsByTitle };
