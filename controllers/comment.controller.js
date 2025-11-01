@@ -1,116 +1,170 @@
-import Comment from '../models/comment.model.js';
-import Post from '../models/post.model.js'; // We need this to update the post's comment array
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  PutCommand,
+  QueryCommand,
+  UpdateCommand,
+  DeleteCommand,
+  ScanCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { v4 as uuidv4 } from "uuid";
+import dotenv from "dotenv";
 
-// Get all comments for a specific post
+dotenv.config();
+
+const client = new DynamoDBClient({
+  region: process.env.AWS_REGION || "ap-south-1",
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+const ddb = DynamoDBDocumentClient.from(client);
+const COMMENTS_TABLE = "Comments";
+
+// ✅ Get all comments for a specific post
 export const getCommentsForPost = async (req, res) => {
   try {
+    console.log("Fetching comments for post:", req.params.postId);
     const { postId } = req.params;
-    const comments = await Comment.find({ post: postId })
-                                  .populate('author', 'username'); // Populate author info
-    if (!comments) {
-      return res.status(404).json({ message: 'No comments found for this post' });
+
+    const result = await ddb.send(
+      new QueryCommand({
+        TableName: COMMENTS_TABLE,
+        IndexName: "postId-index",
+        KeyConditionExpression: "postId = :postId",
+        ExpressionAttributeValues: {
+          ":postId": postId,
+        },
+      })
+    );
+
+    if (!result.Items || result.Items.length === 0) {
+      return res.status(404).json({ message: "No comments found for this post" });
     }
-    res.status(200).json(comments);
+
+    res.status(200).json(result.Items);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching comments', error: error.message });
+    console.error("❌ Error fetching comments:", error);
+    res.status(500).json({ message: "Error fetching comments", error: error.message });
   }
 };
 
-// New: Update a comment's vote
+// ✅ Update a comment's vote
 export const updateCommentVote = async (req, res) => {
   try {
+    console.log("Updating comment vote:", req.params.id);
     const { id } = req.params;
-    // 'direction' will be 'up' or 'down'. 
-    // 'currentVote' will be 'up', 'down', or null to handle toggling.
-    const { direction } = req.body; 
+    const { direction } = req.body;
 
-    let update;
-    if (direction === 'up') {
-      update = { $inc: { votes: 1 } };
-    } else if (direction === 'down') {
-      update = { $inc: { votes: -1 } };
-    } else {
-      return res.status(400).json({ message: 'Invalid vote direction' });
+    let voteChange = 0;
+    if (direction === "up") voteChange = 1;
+    else if (direction === "down") voteChange = -1;
+    else return res.status(400).json({ message: "Invalid vote direction" });
+
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: COMMENTS_TABLE,
+        Key: { commentId: id },
+        UpdateExpression: "ADD votes :inc SET updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":inc": voteChange,
+          ":updatedAt": new Date().toISOString(),
+        },
+        ReturnValues: "ALL_NEW",
+      })
+    );
+
+    if (!result.Attributes) {
+      return res.status(404).json({ message: "Comment not found" });
     }
-    
-    // Find, update, and return the new document
-    const updatedComment = await Comment.findByIdAndUpdate(id, update, { new: true })
-                                      .populate('author', 'username');
 
-    if (!updatedComment) {
-      return res.status(404).json({ message: 'Comment not found' });
-    }
-
-    res.status(200).json(updatedComment);
+    res.status(200).json(result.Attributes);
   } catch (error) {
-    res.status(500).json({ message: 'Error updating vote', error: error.message });
+    console.error("❌ Error updating vote:", error);
+    res.status(500).json({ message: "Error updating vote", error: error.message });
   }
 };
 
-// New: Update comment text
+// ✅ Update comment text
 export const updateCommentText = async (req, res) => {
   try {
+    console.log("Updating comment text:", req.params.id);
     const { id } = req.params;
     const { commentText } = req.body;
 
-    if (!commentText || commentText.trim() === '') {
-      return res.status(400).json({ message: 'Comment text cannot be empty' });
+    if (!commentText || commentText.trim() === "") {
+      return res.status(400).json({ message: "Comment text cannot be empty" });
     }
 
-    // In a real app, you would also verify that the logged-in user
-    // is the author of this comment before allowing an update.
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: COMMENTS_TABLE,
+        Key: { commentId: id },
+        UpdateExpression:
+          "SET commentText = :commentText, updatedAt = :updatedAt",
+        ExpressionAttributeValues: {
+          ":commentText": commentText,
+          ":updatedAt": new Date().toISOString(),
+        },
+        ReturnValues: "ALL_NEW",
+      })
+    );
 
-    const updatedComment = await Comment.findByIdAndUpdate(
-      id,
-      { commentText },
-      { new: true, runValidators: true } // runValidators ensures new text meets schema rules
-    ).populate('author', 'username');
-
-    if (!updatedComment) {
-      return res.status(404).json({ message: 'Comment not found' });
+    if (!result.Attributes) {
+      return res.status(404).json({ message: "Comment not found" });
     }
 
-    res.status(200).json(updatedComment);
+    res.status(200).json(result.Attributes);
   } catch (error) {
-    res.status(500).json({ message: 'Error updating comment', error: error.message });
+    console.error("❌ Error updating comment:", error);
+    res.status(500).json({ message: "Error updating comment", error: error.message });
   }
 };
 
-// New: Delete a comment
+// ✅ Delete comment (and recursively delete children)
 export const deleteComment = async (req, res) => {
   try {
+    console.log("Deleting comment and its replies:", req.params.id);
     const { id } = req.params;
-    
-    // In a real app, you'd verify user ownership here too.
 
-    const deletedComment = await Comment.findByIdAndDelete(id);
-
-    if (!deletedComment) {
-      return res.status(404).json({ message: 'Comment not found' });
-    }
-
-    // --- Clean up references ---
-    
-    // 1. Remove this comment's ID from its parent Post's `comments` array
-    // (This only applies if it was a top-level comment)
-    await Post.findByIdAndUpdate(deletedComment.post, {
-      $pull: { comments: deletedComment._id },
-    });
-
-    // 2. Recursively delete all child comments
-    // We create a helper function to find and delete all descendants
+    // Recursive deletion helper
     const deleteChildren = async (parentId) => {
-      const children = await Comment.find({ parentComment: parentId });
-      for (const child of children) {
-        await deleteChildren(child._id); // Recurse
-        await Comment.findByIdAndDelete(child._id); // Delete child
+      const children = await ddb.send(
+        new ScanCommand({
+          TableName: COMMENTS_TABLE,
+          FilterExpression: "parentCommentId = :parentId",
+          ExpressionAttributeValues: {
+            ":parentId": parentId,
+          },
+        })
+      );
+
+      for (const child of children.Items || []) {
+        await deleteChildren(child.commentId);
+        await ddb.send(
+          new DeleteCommand({
+            TableName: COMMENTS_TABLE,
+            Key: { commentId: child.commentId },
+          })
+        );
       }
     };
-    
-    await deleteChildren(id); // Start the recursive delete
 
-    res.status(200).json({ message: 'Comment and all replies successfully deleted' });
+    await deleteChildren(id);
+
+    // Delete parent comment itself
+    await ddb.send(
+      new DeleteCommand({
+        TableName: COMMENTS_TABLE,
+        Key: { commentId: id },
+      })
+    );
+
+    res.status(200).json({ message: "Comment and all replies deleted successfully" });
   } catch (error) {
-    res.status(500).json({ message: 'Error deleting comment', error: error.message });
+    console.error("❌ Error deleting comment:", error);
+    res.status(500).json({ message: "Error deleting comment", error: error.message });
   }
 };

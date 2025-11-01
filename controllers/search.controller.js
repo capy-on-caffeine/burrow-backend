@@ -10,8 +10,8 @@ dotenv.config();
 let topics = {};
 let keywords = {};
 let relations = [];
-const tags = {};   // { id, name, vector, connections: Set<tagId> }
-const posts = {};  // { id, title, content, vector, tagIds: [] }
+const tags = {};
+const posts = {};
 let _loaded = false;
 
 export async function embed(text) {
@@ -137,15 +137,6 @@ const load = async () => {
     console.error("⚠️ Could not load wiki_feed_graph.json:", err.message);
   }
 };
-
-// await embed("What is the meaning of life?");
-
-// --- Mock embedder (replace with real model later)
-// function embed(text) {
-//   const arr = Array.from(text).map(ch => (ch.charCodeAt(0) % 10) / 10);
-//   const norm = Math.sqrt(arr.reduce((a, b) => a + b * b, 0)) || 1;
-//   return arr.map(x => x / norm);
-// }
 
 function createTag(name, vector) {
   const id = uuidv4();

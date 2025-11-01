@@ -1,121 +1,182 @@
-import Post from '../models/post.model.js';
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, ScanCommand, GetCommand, PutCommand, UpdateCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-const getAllPosts = async (req, res) => {
+const client = new DynamoDBClient({
+  region: process.env.AWS_REGION || "ap-south-1",
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+const docClient = DynamoDBDocumentClient.from(client);
+
+const POSTS_TABLE = process.env.POSTS_TABLE || "Posts";
+
+/**
+ * Get all posts (sorted by createdAt descending)
+ */
+export const getAllPosts = async (req, res) => {
   try {
-    const posts = await Post.find().sort({ createdAt: -1 });
+    console.log("Fetching all posts");
+    const data = await docClient.send(new ScanCommand({ TableName: POSTS_TABLE }));
+    const posts = data.Items || [];
+    // sort manually since DynamoDB doesn't support sort without index
+    posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     res.status(200).json(posts);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching posts', error: error.message });
+    res.status(500).json({ message: "Error fetching posts", error: error.message });
   }
 };
 
-const getPostsBySubreddit = async (req, res) => {
+/**
+ * Get posts by subreddit (using a GSI or filtering)
+ */
+export const getPostsBySubreddit = async (req, res) => {
   try {
     const { subreddit } = req.params;
-    // Decode the subreddit name from the URL parameter
     const decodedSubreddit = decodeURIComponent(subreddit);
-    console.log(`Fetching posts for subreddit: ${decodedSubreddit}`);
 
-    // Query using the decoded subreddit
-    const posts = await Post.find({ subreddit: decodedSubreddit })
-      .populate('author', 'username')
-      .sort({ createdAt: -1 });
+    // If you have a GSI named "SubredditIndex" with PK=subreddit
+    const params = {
+      TableName: POSTS_TABLE,
+      IndexName: "SubredditIndex", // Optional if you have GSI
+      KeyConditionExpression: "subreddit = :s",
+      ExpressionAttributeValues: { ":s": decodedSubreddit },
+    };
 
-    console.log(`Found ${posts.length} posts for subreddit ${decodedSubreddit}`);
-
-    if (!posts || posts.length === 0) {
-      return res.status(404).json({ message: 'No posts found for this subreddit' });
+    let posts;
+    try {
+      const result = await docClient.send(new QueryCommand(params));
+      posts = result.Items || [];
+    } catch {
+      // fallback to scan + filter if no GSI
+      const result = await docClient.send(new ScanCommand({
+        TableName: POSTS_TABLE,
+        FilterExpression: "subreddit = :s",
+        ExpressionAttributeValues: { ":s": decodedSubreddit },
+      }));
+      posts = result.Items || [];
     }
 
+    if (!posts.length) {
+      return res.status(404).json({ message: "No posts found for this subreddit" });
+    }
+
+    posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     res.status(200).json(posts);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching posts by subreddit', error: error.message });
+    res.status(500).json({ message: "Error fetching posts by subreddit", error: error.message });
   }
 };
 
-const getPostsByTitle = async (req, res) => {
+/**
+ * Get posts by title
+ */
+export const getPostsByTitle = async (req, res) => {
   try {
     const { title } = req.params;
-    // Decode the subreddit name from the URL parameter
-    const decodedSubreddit = decodeURIComponent(title);
-    console.log(`Fetching posts for title: ${decodedSubreddit}`);
+    const decodedTitle = decodeURIComponent(title);
 
-    // Query using the decoded subreddit
-    const posts = await Post.find({ title: decodedSubreddit })
-      .populate('author', 'username')
-      .sort({ createdAt: -1 });
+    const result = await docClient.send(new ScanCommand({
+      TableName: POSTS_TABLE,
+      FilterExpression: "title = :t",
+      ExpressionAttributeValues: { ":t": decodedTitle },
+    }));
 
-    console.log(`Found ${posts.length} posts for title ${decodedSubreddit}`);
+    const posts = result.Items || [];
 
-    if (!posts || posts.length === 0) {
-      return res.status(404).json({ message: 'No posts found for this subreddit' });
+    if (!posts.length) {
+      return res.status(404).json({ message: "No posts found for this title" });
     }
 
+    posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     res.status(200).json(posts);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching posts by subreddit', error: error.message });
+    res.status(500).json({ message: "Error fetching posts by title", error: error.message });
   }
 };
 
-const createPost = async (req, res) => {
+/**
+ * Create a new post
+ */
+export const createPost = async (req, res) => {
   try {
     const { title, body, author, subreddit } = req.body;
 
     if (!title || !author || !subreddit) {
-      return res.status(400).json({ message: 'Title, Author, and Subreddit are required.' });
+      return res.status(400).json({ message: "Title, Author, and Subreddit are required." });
     }
 
-    const newPost = new Post({
+    const post = {
+      id: crypto.randomUUID(),
       title,
       body,
       author,
       subreddit,
-    });
+      votes: 0,
+      createdAt: new Date().toISOString(),
+    };
 
-    const savedPost = await newPost.save();
-    res.status(201).json(savedPost);
+    await docClient.send(new PutCommand({
+      TableName: POSTS_TABLE,
+      Item: post,
+    }));
+
+    res.status(201).json(post);
   } catch (error) {
-    res.status(400).json({ message: 'Error creating post', error: error.message });
+    res.status(400).json({ message: "Error creating post", error: error.message });
   }
 };
 
-const getPostById = async (req, res) => {
+/**
+ * Get post by ID
+ */
+export const getPostById = async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
-    if (!post) {
-      return res.status(404).json({ message: 'Post not found' });
+    console.log("Fetching post by ID");
+    const { id } = req.params;
+    const result = await docClient.send(new GetCommand({
+      TableName: POSTS_TABLE,
+      Key: { id },
+    }));
+
+    if (!result.Item) {
+      return res.status(404).json({ message: "Post not found" });
     }
-    res.status(200).json(post);
+
+    res.status(200).json(result.Item);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching post', error: error.message });
+    res.status(500).json({ message: "Error fetching post", error: error.message });
   }
 };
 
-const updatePostVotes = async (req, res) => {
+/**
+ * Update post votes (up/down)
+ */
+export const updatePostVotes = async (req, res) => {
   try {
     const { id } = req.params;
     const { voteType } = req.body;
 
-    let updateOperation;
-
-    if (voteType === 'up') {
-      updateOperation = { $inc: { votes: 1 } };
-    } else if (voteType === 'down') {
-      updateOperation = { $inc: { votes: -1 } };
-    } else {
+    const increment = voteType === "up" ? 1 : voteType === "down" ? -1 : null;
+    if (increment === null) {
       return res.status(400).json({ message: "Invalid vote type. Must be 'up' or 'down'." });
     }
 
-    const updatedPost = await Post.findByIdAndUpdate(id, updateOperation, { new: true });
+    const result = await docClient.send(new UpdateCommand({
+      TableName: POSTS_TABLE,
+      Key: { id },
+      UpdateExpression: "SET votes = if_not_exists(votes, :zero) + :inc",
+      ExpressionAttributeValues: {
+        ":zero": 0,
+        ":inc": increment,
+      },
+      ReturnValues: "ALL_NEW",
+    }));
 
-    if (!updatedPost) {
-      return res.status(404).json({ message: 'Post not found' });
-    }
-
-    res.status(200).json(updatedPost);
+    res.status(200).json(result.Attributes);
   } catch (error) {
-    res.status(400).json({ message: 'Error updating votes', error: error.message });
+    res.status(400).json({ message: "Error updating votes", error: error.message });
   }
 };
-
-export { getAllPosts, createPost, getPostById, updatePostVotes, getPostsBySubreddit, getPostsByTitle };
