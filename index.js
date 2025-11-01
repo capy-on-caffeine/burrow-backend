@@ -8,6 +8,11 @@ import postRoutes from './routes/post.route.js';
 import commentRoutes from './routes/comment.route.js';
 
 import searchRoutes from './routes/search.route.js';
+import { ensureCollections } from './config/qdrant.js';
+import { syncDataToQdrant } from './services/loader.js';
+import { searchBurrow } from './services/search.js';
+import { addPost } from './services/post.js';
+import driver from './config/neo4j.js';
 
 const app = express();
 const port = 5000;
@@ -16,25 +21,37 @@ dotenv.config();
 app.use(cors());
 app.use(express.json());
 
-const URI = process.env.NEO4J_URI;
-const USER = process.env.NEO4J_USERNAME;
-const PASSWORD = process.env.NEO4J_PASSWORD;
+const PORT = process.env.PORT || 8000;
 
-    let driver;
-
-    try {
-    driver = neo4j.driver(URI, neo4j.auth.basic(USER, PASSWORD));
-    console.log('Neo4j connection established.');
-    } catch (err) {
-    console.error('Neo4j connection error:', err);
-    }
-
-app.use(cors());
+await ensureCollections();
 
 app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/comments', commentRoutes);
-app.use('/api/search', searchRoutes);
+// app.use('/api/search', searchRoutes);
+
+app.get("/api/search", async (req, res) => {
+  console.log(req.query);
+  
+  const q = req.query.query;
+  const results = await searchBurrow(q);
+  res.json(results);
+});
+
+app.post("/api/addPost", async (req, res) => {
+  const post = await addPost(req.body);
+  res.json(post);
+});
+
+app.get("/api/sync", async (req, res) => {
+  await syncDataToQdrant();
+  res.send("Synced data to Qdrant");
+});
+
+app.get('/api/health', (req, res) => {
+  res.send('API is running');
+});
+
 app.get('/api/graph', async (req, res) => {
   const session = driver.session();
   const query = `
