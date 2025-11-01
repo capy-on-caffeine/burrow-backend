@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import userRoutes from './routes/user.route.js';
 import postRoutes from './routes/post.route.js';
 import commentRoutes from './routes/comment.route.js';
+import searchRoutes from './routes/search.route.js';
 const app = express();
 
 dotenv.config();
@@ -17,6 +18,7 @@ const PORT = process.env.PORT || 8000;
 app.use('/api/users', userRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/comments', commentRoutes);
+app.use('/api/search', searchRoutes);
 
 mongoose.connect(process.env.MONGODB_URI);
 
